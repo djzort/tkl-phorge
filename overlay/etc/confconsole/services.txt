@@ -1,0 +1,6 @@
+Web:        http://$ipaddr
+            https://$ipaddr
+Webmin:     https://$ipaddr:12321
+Adminer:    https://$ipaddr:12322
+SSH/SFTP:   root@$ipaddr (port 22)
+GIT+SSH     ssh://VCSUSER@$ipaddr:2222/

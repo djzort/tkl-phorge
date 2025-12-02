@@ -1,0 +1,14 @@
+[Unit]
+Description=Phorge Daemons
+Documentation=https://we.phorge.it/book/phorge/article/managing_daemons/
+After=syslog.target network.target mariadb.service
+
+[Service]
+Type=forking
+User=daemon
+Group=daemon
+ExecStart=/opt/phorge/bin/phd start
+ExecStop=/opt/phorge/bin/phd stop
+
+[Install]
+WantedBy=multi-user.target

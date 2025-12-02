@@ -1,0 +1,21 @@
+[Unit]
+Description=Phorge sshd
+Documentation=https://we.phorge.it/book/phorge/article/diffusion_hosting/#sshd-setup
+After=network.target auditd.service
+ConditionPathExists=!/etc/ssh/sshd_not_to_be_run
+
+[Service]
+ExecStartPre=/usr/sbin/sshd -t -f /etc/ssh/sshd_config.phorge
+ExecStart=/usr/sbin/sshd -D -f /etc/ssh/sshd_config.phorge
+ExecReload=/usr/sbin/sshd -t -f /etc/ssh/sshd_config.phorge
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartPreventExitStatus=255
+Type=notify
+RuntimeDirectory=sshd
+RuntimeDirectoryMode=0755
+
+[Install]
+WantedBy=multi-user.target
+Alias=phorge-sshd.service

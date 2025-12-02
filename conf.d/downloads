@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+
+set -ex
+
+dl() {
+    [ "$FAB_HTTP_PROXY" ] && PROXY="--proxy $FAB_HTTP_PROXY"
+    [ "$FAB_HTTPS_PROXY" ] && PROXY="--proxy $FAB_HTTPS_PROXY"
+    cd $2; curl --fail --location --remote-header-name --remote-name --silent $PROXY $1; cd -
+}
+
+SRC=/usr/local/src
+VERSION="2025.18"
+
+dl https://github.com/phorgeit/phorge/archive/refs/tags/${VERSION}.tar.gz $SRC
+dl https://github.com/phorgeit/arcanist/archive/refs/tags/${VERSION}.tar.gz $SRC

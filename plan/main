@@ -1,0 +1,19 @@
+#include <turnkey/base>
+#include <turnkey/lamp>
+
+mercurial
+
+php-apcu
+php-curl
+php-gd
+php-iconv
+php-mailparse
+php-mbstring
+php-mysqli
+php-xml
+php-zip
+
+python3-pygments
+
+subversion
+sudo
