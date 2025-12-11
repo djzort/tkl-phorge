@@ -1,0 +1,5 @@
+turnkey-phorge-18.0 (1) turnkey; urgency=low
+
+  * Initial public release of TurnKey Phorge, based upon various other appliances.
+
+ -- Dean Hamstead <dean@fragfest.com.au> Thu, 11 Dec 2025 18:00:00 +1000

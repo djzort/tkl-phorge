@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+
+set -exu
+
+DB_USER=phorge
+DB_PASS=$(mcookie)
+
+ADMIN_NAME=admin
+ADMIN_PASS=turnkey
+VCSUSER=vcs
+DAEMONUSER=daemon-phorge
+
+SRC=/usr/local/src
+ARCANIST_APPROOT=/opt/arcanist
+PHORGE_APPROOT=/opt/phorge
+WEBROOT=/var/www/phorge
+
+# create users
+adduser --system \
+  --no-create-home \
+  --group \
+  --shell $(command -v nologin) \
+  $DAEMONUSER
+adduser --system \
+  --group \
+  --shell $(command -v dash) \
+  --home "/var/lib/$VCSUSER" \
+  $VCSUSER
+usermod -p NP $VCSUSER
+
+# configure php
+sed -i 's/^\s*;\?\s*opcache\.validate_timestamps\s*=.*/opcache.validate_timestamps=0/' /etc/php/8.2/apache2/php.ini
+sed -i 's/^\s*post_max_size\s*=.*/post_max_size = 32M/' /etc/php/8.2/apache2/php.ini
+
+# configure mariadb
+sed -i 's/^\s*#*\s*max_allowed_packet\s*=.*/max_allowed_packet = 1G/' /etc/mysql/mariadb.conf.d/50-server.cnf
+sed -i 's/^\s*#*\s*innodb_buffer_pool_size\s*=.*/innodb_buffer_pool_size= 1600M/' /etc/mysql/mariadb.conf.d/50-server.cnf
+
+# configure sudo
+cmds=()
+for bin in git git-http-backend hg ssh; do
+    if [[ -x "/usr/bin/$bin" ]]; then
+        cmds+=("/usr/bin/$bin")
+    elif [[ -x "/usr/lib/git-core/$bin" ]]; then
+        cmds+=("/usr/lib/git-core/$bin")
+    elif path=$(command -v "$bin" 2>/dev/null) && [[ -n "$path" ]]; then
+        cmds+=("$path")
+    else
+        echo "ERROR: $bin not found in /usr/bin or PATH"
+        exit 1
+    fi
+done
+IFS=', '
+WWWDATACOMMANDS="${cmds[*]}"
+
+cmds=()
+for bin in git git-upload-pack git-receive-pack hg svnserve ssh; do
+    if [[ -x "/usr/bin/$bin" ]]; then
+        cmds+=("/usr/bin/$bin")
+    elif [[ -x "/usr/lib/git-core/$bin" ]]; then
+        cmds+=("/usr/lib/git-core/$bin")
+    elif path=$(command -v "$bin" 2>/dev/null) && [[ -n "$path" ]]; then
+        cmds+=("$path")
+    else
+        echo "ERROR: $bin not found in /usr/bin or PATH"
+        exit 1
+    fi
+done
+IFS=', '
+VCSUSERCOMMANDS="${cmds[*]}"
+
+sed -i \
+    -e "s/VCSUSER/$VCSUSER/" \
+    -e "s/DAEMONUSER/$DAEMONUSER/" \
+    -e "s|WWWDATACOMMANDS|$WWWDATACOMMANDS|" \
+    -e "s|VCSUSERCOMMANDS|$VCSUSERCOMMANDS|" \
+    /etc/sudoers.d/phorge
+
+# unpack phorge and create required directories
+mkdir -p $ARCANIST_APPROOT
+mkdir -p $PHORGE_APPROOT
+tar -zxf $SRC/arcanist-*.tar.gz -C $ARCANIST_APPROOT --strip-components=1
+tar -zxf $SRC/phorge-*.tar.gz -C $PHORGE_APPROOT --strip-components=1
+rm -f $SRC/arcanist-*.tar.gz $SRC/phorge-*.tar.gz
+
+# configure apache and webroot
+a2dissite 000-default
+a2ensite phorge
+a2enmod rewrite
+
+ln -s $PHORGE_APPROOT/webroot $WEBROOT
+
+# start services
+service mysql start
+
+mysql --user=root \
+    --batch --execute \
+    "grant all privileges on *.* to $DB_USER@localhost identified by '$DB_PASS'; \
+    flush privileges;"
+
+# insert default schema
+cd $PHORGE_APPROOT
+./bin/storage upgrade --force --user $DB_USER --password $DB_PASS
+
+# enable phorge-phd
+systemctl daemon-reload
+systemctl enable phorge-phd
+
+echo "custom/turnkey" > "$PHORGE_APPROOT/conf/local/ENVIRONMENT"
+mkdir -p "$PHORGE_APPROOT/conf/custom"
+cat << EOF > "$PHORGE_APPROOT/conf/custom/turnkey.conf.php"
+<?php
+
+return array(
+  'mysql.host' => 'localhost',
+  'mysql.user' => '$DB_USER',
+  'mysql.pass' => '$DB_PASS',
+);
+EOF
+
+cat << EOF > "$PHORGE_APPROOT/conf/local/local.json"
+{
+  "diffusion.ssh-port": 2222,
+  "diffusion.ssh-user": "vcs",
+  "phd.user": "daemon-phorge",
+  "cluster.mailers": [
+    {
+      "key": "postfix",
+      "type": "sendmail"
+    }
+  ],
+  "repository.default-local-path": "/var/repo",
+  "pygments.enabled": true
+}
+EOF
+
+sed -i "s/VCSUSER/$VCSUSER/" "/etc/confconsole/services.txt"
+
+PHORGE_SSH_HOOK="/usr/libexec/phorge-ssh-hook.sh"
+cp "$PHORGE_APPROOT/resources/sshd/phorge-ssh-hook.sh" "$PHORGE_SSH_HOOK"
+sed -i "s/^VCSUSER=.*/VCSUSER=\"$VCSUSER\"/" "$PHORGE_SSH_HOOK"
+sed -i "s|^ROOT=.*|ROOT=\"$PHORGE_APPROOT\"|" "$PHORGE_SSH_HOOK"
+chown root:root "$PHORGE_SSH_HOOK"
+chmod 755 "$PHORGE_SSH_HOOK"
+
+PHORGE_SSHD_CONFIG="/etc/ssh/sshd_config.phorge"
+cp "$PHORGE_APPROOT/resources/sshd/sshd_config.phorge.example" "$PHORGE_SSHD_CONFIG"
+sed -i "s/^AuthorizedKeysCommandUser .*/AuthorizedKeysCommandUser $VCSUSER/" "$PHORGE_SSHD_CONFIG"
+sed -i "s/^AllowUsers .*/AllowUsers $VCSUSER/" "$PHORGE_SSHD_CONFIG"
+chown root:root "$PHORGE_SSHD_CONFIG"
+systemctl enable phorge-sshd
+
+mkdir -p /var/repo
+chown $DAEMONUSER:$DAEMONUSER /var/repo
+
+# stop services
+service mysql stop
+
